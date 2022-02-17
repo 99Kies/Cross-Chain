@@ -6,14 +6,17 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+use codec::{Decode, Encode};
+#[cfg(feature = "std")]
+use serde::{Deserialize, Serialize};
 use smallvec::smallvec;
 use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
-	traits::{AccountIdLookup, BlakeTwo256, Block as BlockT, IdentifyAccount, Verify},
+	traits::{AccountIdLookup, BlakeTwo256, Block as BlockT, Convert, IdentifyAccount, Verify},
 	transaction_validity::{TransactionSource, TransactionValidity},
-	ApplyExtrinsicResult, MultiSignature,
+	ApplyExtrinsicResult, MultiSignature, RuntimeDebug,
 };
 
 use sp_std::prelude::*;
@@ -23,7 +26,7 @@ use sp_version::RuntimeVersion;
 
 use frame_support::{
 	construct_runtime, match_type, parameter_types,
-	traits::{Everything, Nothing},
+	traits::{Contains, Everything, Nothing},
 	weights::{
 		constants::{BlockExecutionWeight, ExtrinsicBaseWeight, WEIGHT_PER_SECOND},
 		DispatchClass, IdentityFee, Weight, WeightToFeeCoefficient, WeightToFeeCoefficients,
@@ -38,6 +41,11 @@ use frame_system::{
 pub use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 pub use sp_runtime::{MultiAddress, Perbill, Permill};
 
+// pub use primitives::{
+// 	AccountIndex, Address, Amount, AuctionId, AuthoritysOriginId, Balance, BlockNumber, CurrencyId, DataProviderId,
+// 	EraIndex, Hash, Moment, Nonce, ReserveIdentifier, Share, Signature, TokenSymbol, TradingPair,
+// };
+
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
 
@@ -47,6 +55,7 @@ use polkadot_parachain::primitives::Sibling;
 use polkadot_runtime_common::{BlockHashCount, RocksDbWeight, SlowAdjustingFeeUpdate};
 
 // XCM Imports
+use scale_info::TypeInfo;
 use xcm::latest::prelude::*;
 use xcm_builder::{
 	AccountId32Aliases, AllowTopLevelPaidExecutionFrom, AllowUnpaidExecutionFrom, CurrencyAdapter,
@@ -57,8 +66,29 @@ use xcm_builder::{
 };
 use xcm_executor::{Config, XcmExecutor};
 
+// use orml_currencies::BasicCurrencyAdapter;
+// use orml_traits::{
+// 	create_median_value_data_provider, parameter_type_with_key, DataFeeder, DataProviderExtended,
+// 	MultiCurrency,
+// };
+// pub use orml_xcm_support::{
+// 	DepositToAlternative, IsNativeConcrete, MultiCurrencyAdapter, MultiNativeAsset,
+// };
+
 /// Import the template pallet.
 pub use pallet_template;
+
+#[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, TypeInfo)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum CurrencyId {
+	Native,
+	DOT,
+	KSM,
+	BTC,
+	WND,
+}
+
+pub type Amount = i128;
 
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
 pub type Signature = MultiSignature;
@@ -592,6 +622,131 @@ impl pallet_template::Config for Runtime {
 	type Event = Event;
 }
 
+// orml_currencies
+
+// parameter_types! {
+// 	pub const GetNativeCurrencyId: CurrencyId = CurrencyId::Native;
+// }
+
+// impl orml_currencies::Config for Runtime {
+// 	type Event = Event;
+// 	type MultiCurrency = ();
+// 	type NativeCurrency = BasicCurrencyAdapter<Runtime, Balances, Amount, BlockNumber>;
+// 	type GetNativeCurrencyId = GetNativeCurrencyId;
+// 	type WeightInfo = ();
+// }
+
+// orml_xtokens
+pub struct CurrencyIdConvert;
+
+const RELAY_CHAIN_CURRENCY_ID: CurrencyId = CurrencyId::WND;
+
+impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
+	fn convert(id: CurrencyId) -> Option<MultiLocation> {
+		match id {
+			RELAY_CHAIN_CURRENCY_ID => Some(MultiLocation::parent()),
+			_ => None,
+		}
+	}
+}
+impl Convert<MultiLocation, Option<CurrencyId>> for CurrencyIdConvert {
+	fn convert(location: MultiLocation) -> Option<CurrencyId> {
+		// match location {
+		//     X1(Parent) => Some(RELAY_CHAIN_CURRENCY_ID),
+		//     _ => None,
+		// }
+		// TODO not sure this, need to check what multiloction mean.
+		if location.parent_count() == 1 {
+			Some(RELAY_CHAIN_CURRENCY_ID)
+		} else {
+			None
+		}
+	}
+}
+impl Convert<MultiAsset, Option<CurrencyId>> for CurrencyIdConvert {
+	fn convert(asset: MultiAsset) -> Option<CurrencyId> {
+		if let MultiAsset { id: Concrete(location), .. } = asset {
+			Self::convert(location)
+		} else {
+			None
+		}
+	}
+}
+
+parameter_types! {
+	pub SelfLocation: MultiLocation = MultiLocation::new(1, X1(Parachain(ParachainInfo::parachain_id().into())));
+
+}
+pub struct AccountIdToMultiLocation;
+
+impl Convert<AccountId, MultiLocation> for AccountIdToMultiLocation {
+	fn convert(account: AccountId) -> MultiLocation {
+		X1(AccountId32 { network: NetworkId::Any, id: account.into() }).into()
+	}
+}
+
+parameter_types! {
+	pub const BaseXcmWeight: Weight = 100_000_000; // TODO: recheck this
+	pub const MaxAssetsForTransfer: usize = 2;
+}
+
+impl orml_xtokens::Config for Runtime {
+	type Event = Event;
+	type Balance = Balance;
+	type CurrencyId = CurrencyId;
+	type CurrencyIdConvert = CurrencyIdConvert;
+	type AccountIdToMultiLocation = AccountIdToMultiLocation;
+	type SelfLocation = SelfLocation;
+	type XcmExecutor = XcmExecutor<XcmConfig>;
+	type Weigher = FixedWeightBounds<UnitWeightCost, Call, MaxInstructions>;
+	type BaseXcmWeight = BaseXcmWeight;
+	type LocationInverter = LocationInverter<Ancestry>;
+	type MaxAssetsForTransfer = MaxAssetsForTransfer;
+}
+
+// orml tokens
+// Aggregated data provider cannot feed.
+// impl DataFeeder<CurrencyId, Price, AccountId> for AggregatedDataProvider {
+// 	fn feed_value(_: AccountId, _: CurrencyId, _: Price) -> DispatchResult {
+// 		Err("Not supported".into())
+// 	}
+// }
+
+// pub struct DustRemovalWhitelist;
+// impl Contains<AccountId> for DustRemovalWhitelist {
+// 	fn contains(a: &AccountId) -> bool {
+// 		get_all_module_accounts().contains(a)
+// 	}
+// }
+
+// parameter_types! {
+// 	pub const TreasuryPalletId: PalletId = PalletId(*b"aca/trsy");
+// 	pub CrossTreasuryAccount: AccountId = TreasuryPalletId::get().into_account();
+// }
+
+// impl orml_tokens::Config for Runtime {
+// 	type Event = Event;
+// 	type Balance = Balance;
+// 	type Amount = Amount;
+// 	type CurrencyId = CurrencyId;
+// 	type WeightInfo = ();
+// 	type ExistentialDeposits = ();
+// 	type OnDust = orml_tokens::TransferDust<Runtime, CrossTreasuryAccount>;
+// 	type MaxLocks = MaxLocks;
+// 	type DustRemovalWhitelist = DustRemovalWhitelist;
+// }
+
+// // orml unknown tokens
+// impl orml_unknown_tokens::Config for Runtime {
+// 	type Event = Event;
+// }
+
+// // orml xcm
+// impl orml_xcm::Config for Runtime {
+// 	type Event = Event;
+// 	type SovereignOrigin = EnsureRoot<AccountId>;
+// }
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 construct_runtime!(
 	pub enum Runtime where
@@ -623,6 +778,11 @@ construct_runtime!(
 		PolkadotXcm: pallet_xcm::{Pallet, Call, Event<T>, Origin, Config} = 31,
 		CumulusXcm: cumulus_pallet_xcm::{Pallet, Event<T>, Origin} = 32,
 		DmpQueue: cumulus_pallet_dmp_queue::{Pallet, Call, Storage, Event<T>} = 33,
+		XTokens: orml_xtokens::{Pallet, Storage, Call, Event<T>} = 34,
+		// UnknownTokens: orml_unknown_tokens::{Pallet, Storage, Event} = 35,
+		// OrmlXcm: orml_xcm::{Pallet, Call, Event<T>} = 36,
+		// Currencies: orml_currencies::{Pallet, Call, Event<T>} = 37,
+		// Tokens: orml_tokens::{Pallet, Storage, Event<T>, Config<T>} = 38,
 
 		// Template
 		TemplatePallet: pallet_template::{Pallet, Call, Storage, Event<T>}  = 40,
