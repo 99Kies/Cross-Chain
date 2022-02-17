@@ -1,8 +1,6 @@
 # Substrate Cumulus Parachain Template
+Add cross-chain transfer function(orml-xtokns) for parachain.
 
-A new [Cumulus](https://github.com/paritytech/cumulus/)-based Substrate node, ready for hacking ☁️..
-
-This project is originally a fork of the
 [Substrate Node Template](https://github.com/substrate-developer-hub/substrate-node-template)
 modified to include dependencies required for registering this node as a **parathread** or
 **parachain** to a **relay chain**.
