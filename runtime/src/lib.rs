@@ -78,17 +78,17 @@ use xcm_executor::{Config, XcmExecutor};
 /// Import the template pallet.
 pub use pallet_template;
 
-#[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, TypeInfo)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub enum CurrencyId {
-	Native,
-	DOT,
-	KSM,
-	BTC,
-	WND,
-}
+// #[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, TypeInfo)]
+// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+// pub enum CurrencyId {
+// 	Native,
+// 	DOT,
+// 	KSM,
+// 	BTC,
+// 	WND,
+// }
 
-pub type Amount = i128;
+
 
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
 pub type Signature = MultiSignature;
@@ -496,7 +496,8 @@ impl Config for XcmConfig {
 	type AssetTransactor = LocalAssetTransactor;
 	type OriginConverter = XcmOriginToTransactDispatchOrigin;
 	type IsReserve = NativeAsset;
-	type IsTeleporter = (); // Teleporting is disabled.
+	// type IsTeleporter = (); // Teleporting is disabled.
+	type IsTeleporter = NativeAsset; // Teleporting is disabled.
 	type LocationInverter = LocationInverter<Ancestry>;
 	type Barrier = Barrier;
 	type Weigher = FixedWeightBounds<UnitWeightCost, Call, MaxInstructions>;
@@ -637,56 +638,80 @@ impl pallet_template::Config for Runtime {
 // }
 
 // orml_xtokens
+#[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, codec::MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum CurrencyId {
+	// / Relay chain token.
+	ROC,
+	// Parachain A token.
+	FF,
+	// Parachain B token.
+	DORA,
+}
+
+pub type Amount = i128;
+
 pub struct CurrencyIdConvert;
-
-const RELAY_CHAIN_CURRENCY_ID: CurrencyId = CurrencyId::WND;
-
 impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
 	fn convert(id: CurrencyId) -> Option<MultiLocation> {
 		match id {
-			RELAY_CHAIN_CURRENCY_ID => Some(MultiLocation::parent()),
-			_ => None,
+			CurrencyId::ROC => Some(Parent.into()),
+			CurrencyId::FF => Some((Parent, Parachain(1), GeneralKey("FF".into())).into()),
+			CurrencyId::DORA => Some((Parent, Parachain(2), GeneralKey("DORA".into())).into()),
 		}
 	}
 }
 impl Convert<MultiLocation, Option<CurrencyId>> for CurrencyIdConvert {
-	fn convert(location: MultiLocation) -> Option<CurrencyId> {
-		// match location {
-		//     X1(Parent) => Some(RELAY_CHAIN_CURRENCY_ID),
-		//     _ => None,
-		// }
-		// TODO not sure this, need to check what multiloction mean.
-		if location.parent_count() == 1 {
-			Some(RELAY_CHAIN_CURRENCY_ID)
-		} else {
-			None
+	fn convert(l: MultiLocation) -> Option<CurrencyId> {
+		let ff: Vec<u8> = "FF".into();
+		let dora: Vec<u8> = "DORA".into();
+		if l == MultiLocation::parent() {
+			return Some(CurrencyId::ROC);
+		}
+		match l {
+			MultiLocation { parents, interior } if parents == 1 => match interior {
+				X2(Parachain(1000), GeneralKey(k)) if k == ff => Some(CurrencyId::FF),
+				X2(Parachain(2000), GeneralKey(k)) if k == dora => Some(CurrencyId::DORA),
+				_ => None,
+			},
+			MultiLocation { parents, interior } if parents == 0 => match interior {
+				X1(GeneralKey(k)) if k == ff => Some(CurrencyId::FF),
+				X1(GeneralKey(k)) if k == dora => Some(CurrencyId::DORA),
+				_ => None,
+			},
+			_ => None,
 		}
 	}
 }
 impl Convert<MultiAsset, Option<CurrencyId>> for CurrencyIdConvert {
-	fn convert(asset: MultiAsset) -> Option<CurrencyId> {
-		if let MultiAsset { id: Concrete(location), .. } = asset {
-			Self::convert(location)
+	fn convert(a: MultiAsset) -> Option<CurrencyId> {
+		if let MultiAsset {
+			fun: Fungible(_),
+			id: Concrete(id),
+		} = a
+		{
+			Self::convert(id)
 		} else {
-			None
+			Option::None
 		}
 	}
 }
 
-parameter_types! {
-	pub SelfLocation: MultiLocation = MultiLocation::new(1, X1(Parachain(ParachainInfo::parachain_id().into())));
-
-}
 pub struct AccountIdToMultiLocation;
-
 impl Convert<AccountId, MultiLocation> for AccountIdToMultiLocation {
 	fn convert(account: AccountId) -> MultiLocation {
-		X1(AccountId32 { network: NetworkId::Any, id: account.into() }).into()
+		X1(Junction::AccountId32 {
+			network: NetworkId::Any,
+			id: account.into(),
+		})
+		.into()
 	}
 }
 
 parameter_types! {
-	pub const BaseXcmWeight: Weight = 100_000_000; // TODO: recheck this
+	// pub SelfLocation: MultiLocation = MultiLocation::new(1, X1(Parachain(ParachainInfo::get().into())));
+	pub SelfLocation: MultiLocation = MultiLocation::new(1, X1(Parachain(ParachainInfo::parachain_id().into())));
+	pub const BaseXcmWeight: Weight = 100_000_000;
 	pub const MaxAssetsForTransfer: usize = 2;
 }
 
