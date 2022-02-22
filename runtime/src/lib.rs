@@ -656,8 +656,8 @@ impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
 	fn convert(id: CurrencyId) -> Option<MultiLocation> {
 		match id {
 			CurrencyId::ROC => Some(Parent.into()),
-			CurrencyId::FF => Some((Parent, Parachain(1), GeneralKey("FF".into())).into()),
-			CurrencyId::DORA => Some((Parent, Parachain(2), GeneralKey("DORA".into())).into()),
+			CurrencyId::FF => Some((Parent, Parachain(1000), GeneralKey("FF".into())).into()),
+			CurrencyId::DORA => Some((Parent, Parachain(2000), GeneralKey("DORA".into())).into()),
 		}
 	}
 }
