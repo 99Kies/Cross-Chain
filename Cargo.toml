@@ -6,4 +6,6 @@ members = [
 	'node',
 	'pallets/*',
 	'runtime',
+	# "primitives/common-traits",
+	# "primitives/common-types",
 ]
