@@ -1,5 +1,5 @@
 use cumulus_primitives_core::ParaId;
-use parachain_template_runtime::{AccountId, AuraId, Signature, EXISTENTIAL_DEPOSIT};
+use parachain_template_runtime::{AccountId, AuraId, Signature, EXISTENTIAL_DEPOSIT, TokensConfig};
 use sc_chain_spec::{ChainSpecExtension, ChainSpecGroup};
 use sc_service::ChainType;
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub fn development_config() -> ChainSpec {
 	let mut properties = sc_chain_spec::Properties::new();
 	// properties.insert("tokenSymbol".into(), "UNIT".into());
 	properties.insert("tokenSymbol".into(), "FF".into());
-	properties.insert("tokenDecimals".into(), 12.into());
+	properties.insert("tokenDecimals".into(), 18.into());
 	properties.insert("ss58Format".into(), 42.into());
 
 	ChainSpec::from_genesis(
@@ -184,6 +184,28 @@ fn testnet_genesis(
 	endowed_accounts: Vec<AccountId>,
 	id: ParaId,
 ) -> parachain_template_runtime::GenesisConfig {
+	// let num_endowed_accounts = endowed_accounts.len();
+	// let (balances, token_balances) = match total_issuance {
+	// 	Some(total_issuance) => {
+	// 		let balance_per_endowed = total_issuance
+	// 			.checked_div(num_endowed_accounts as parachain_template_runtime::Balance)
+	// 			.unwrap_or(0 as parachain_template_runtime::Balance);
+	// 		(
+	// 			endowed_accounts
+	// 				.iter()
+	// 				.cloned()
+	// 				.map(|k| (k, balance_per_endowed))
+	// 				.collect(),
+	// 			endowed_accounts
+	// 				.iter()
+	// 				.cloned()
+	// 				.map(|k| (k, parachain_template_runtime::CurrencyId::FF, balance_per_endowed))
+	// 				.collect(),
+	// 		)
+	// 	}
+	// 	None => (vec![], vec![]),
+	// };
+
 	parachain_template_runtime::GenesisConfig {
 		system: parachain_template_runtime::SystemConfig {
 			code: parachain_template_runtime::WASM_BINARY
@@ -193,6 +215,9 @@ fn testnet_genesis(
 		balances: parachain_template_runtime::BalancesConfig {
 			balances: endowed_accounts.iter().cloned().map(|k| (k, 1 << 60)).collect(),
 		},
+		// balances: balances,
+
+
 		parachain_info: parachain_template_runtime::ParachainInfoConfig { parachain_id: id },
 		collator_selection: parachain_template_runtime::CollatorSelectionConfig {
 			invulnerables: invulnerables.iter().cloned().map(|(acc, _)| acc).collect(),
@@ -219,5 +244,7 @@ fn testnet_genesis(
 		polkadot_xcm: parachain_template_runtime::PolkadotXcmConfig {
 			safe_xcm_version: Some(SAFE_XCM_VERSION),
 		},
+		// tokens: TokensConfig { balances: token_balances },
+		tokens: TokensConfig { balances: vec![] },
 	}
 }
