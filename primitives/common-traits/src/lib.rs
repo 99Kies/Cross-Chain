@@ -1,0 +1,285 @@
+// Ensure we're `no_std` when compiling for WebAssembly.
+#![cfg_attr(not(feature = "std"), no_std)]
+
+use codec::{Decode, Encode};
+use frame_support::dispatch::{Codec, DispatchResult, DispatchResultWithPostInfo};
+use frame_support::scale_info::TypeInfo;
+use frame_support::sp_runtime::ArithmeticError;
+use frame_support::Parameter;
+use frame_support::RuntimeDebug;
+use impl_trait_for_tuples::impl_for_tuples;
+use sp_runtime::traits::{
+	AtLeast32BitUnsigned, Bounded, CheckedAdd, MaybeDisplay, MaybeMallocSizeOf, MaybeSerialize,
+	MaybeSerializeDeserialize, Member, Zero,
+};
+use sp_runtime::DispatchError;
+use sp_std::fmt::Debug;
+use sp_std::hash::Hash;
+use sp_std::str::FromStr;
+use sp_std::vec::Vec;
+
+/// A trait used for loosely coupling the claim pallet with a reward mechanism.
+///
+/// ## Overview
+/// The crowdloan reward mechanism is separated from the crowdloan claiming process, the latter
+/// being generic, acting as a kind of proxy to the rewarding mechanism, that is specific to
+/// to each crowdloan campaign. The aim of this pallet is to ensure that a claim for a reward
+/// payout is well-formed, checking for replay attacks, spams or invalid claim (e.g. unknown
+/// contributor, exceeding reward amount, ...).
+/// See the [`crowdloan-reward`] pallet, that implements a reward mechanism with vesting, for
+/// instance.
+pub trait Reward {
+	/// The account from the parachain, that the claimer provided in her/his transaction.
+	type ParachainAccountId: Debug
+		+ MaybeSerialize
+		+ MaybeSerializeDeserialize
+		+ Member
+		+ Ord
+		+ Parameter
+		+ TypeInfo;
+
+	/// The contribution amount in relay chain tokens.
+	type ContributionAmount: AtLeast32BitUnsigned
+		+ Codec
+		+ Copy
+		+ Debug
+		+ Default
+		+ MaybeSerializeDeserialize
+		+ Member
+		+ Parameter
+		+ Zero
+		+ TypeInfo;
+
+	/// Block number type used by the runtime
+	type BlockNumber: AtLeast32BitUnsigned
+		+ Bounded
+		+ Copy
+		+ Debug
+		+ Default
+		+ FromStr
+		+ Hash
+		+ MaybeDisplay
+		+ MaybeMallocSizeOf
+		+ MaybeSerializeDeserialize
+		+ Member
+		+ Parameter
+		+ TypeInfo;
+
+	/// Rewarding function that is invoked from the claim pallet.
+	///
+	/// If this function returns successfully, any subsequent claim of the same claimer will be
+	/// rejected by the claim module.
+	fn reward(
+		who: Self::ParachainAccountId,
+		contribution: Self::ContributionAmount,
+	) -> DispatchResultWithPostInfo;
+}
+
+/// A trait used to convert a type to BigEndian format
+pub trait BigEndian<T> {
+	fn to_big_endian(&self) -> T;
+}
+
+/// A trait that can be used to fetch the nav and update nav for a given pool
+pub trait PoolNAV<PoolId, Amount> {
+	type ClassId;
+	type Origin;
+	// nav returns the nav and the last time it was calculated
+	fn nav(pool_id: PoolId) -> Option<(Amount, u64)>;
+	fn update_nav(pool_id: PoolId) -> Result<Amount, DispatchError>;
+	fn initialise(origin: Self::Origin, pool_id: PoolId, class_id: Self::ClassId)
+		-> DispatchResult;
+}
+
+/// A trait that support pool inspection operations such as pool existence checks and pool admin of permission set.
+pub trait PoolInspect<AccountId> {
+	type PoolId: Parameter + Member + Debug + Copy + Default + TypeInfo;
+
+	/// check if the pool exists
+	fn pool_exists(pool_id: Self::PoolId) -> bool;
+}
+
+/// A trait that support pool reserve operations such as withdraw and deposit
+pub trait PoolReserve<AccountId>: PoolInspect<AccountId> {
+	type Balance;
+
+	/// Withdraw `amount` from the reserve to the `to` account.
+	fn withdraw(pool_id: Self::PoolId, to: AccountId, amount: Self::Balance) -> DispatchResult;
+
+	/// Deposit `amount` from the `from` account into the reserve.
+	fn deposit(pool_id: Self::PoolId, from: AccountId, amount: Self::Balance) -> DispatchResult;
+}
+
+pub trait Permissions<AccountId> {
+	type Location;
+	type Role;
+	type Error;
+	type Ok;
+
+	fn has_permission(location: Self::Location, who: AccountId, role: Self::Role) -> bool;
+
+	fn add_permission(
+		location: Self::Location,
+		who: AccountId,
+		role: Self::Role,
+	) -> Result<Self::Ok, Self::Error>;
+
+	fn rm_permission(
+		location: Self::Location,
+		who: AccountId,
+		role: Self::Role,
+	) -> Result<Self::Ok, Self::Error>;
+}
+
+pub trait Properties {
+	type Property;
+	type Error;
+	type Ok;
+
+	fn exists(&self, property: Self::Property) -> bool;
+
+	fn empty(&self) -> bool;
+
+	fn rm(&mut self, property: Self::Property) -> Result<Self::Ok, Self::Error>;
+
+	fn add(&mut self, property: Self::Property) -> Result<Self::Ok, Self::Error>;
+}
+
+pub trait PreConditions<T> {
+	type Result;
+
+	fn check(t: T) -> Self::Result;
+}
+
+#[impl_for_tuples(1, 10)]
+#[tuple_types_custom_trait_bound(PreConditions<T, Result = bool>)]
+impl<T> PreConditions<T> for Tuple
+where
+	T: Clone,
+{
+	type Result = bool;
+
+	fn check(t: T) -> Self::Result {
+		for_tuples!( #( <Tuple as PreConditions::<T>>::check(t.clone()) )&* )
+	}
+}
+
+#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub struct Always;
+impl<T> PreConditions<T> for Always {
+	type Result = bool;
+
+	fn check(_t: T) -> bool {
+		true
+	}
+}
+
+#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub struct Never;
+impl<T> PreConditions<T> for Never {
+	type Result = bool;
+
+	fn check(_t: T) -> bool {
+		false
+	}
+}
+
+/// A trait that Assets or Tokens can implement so that pallets
+/// can easily use the trait `InspectMetadata` with them.
+pub trait TokenMetadata {
+	fn name(&self) -> Vec<u8>;
+
+	fn symbol(&self) -> Vec<u8>;
+
+	fn decimals(&self) -> u8;
+}
+
+/// A means of weighting a tranche. This can be used
+/// in order to determine how much importance a tranche has
+pub trait TrancheWeigher {
+	type External;
+	type Weight;
+
+	fn calculate_weight(&self, input: Self::External) -> Self::Weight;
+}
+
+/// Implementation for a vec of TrancheWeigher
+impl<T: TrancheWeigher> TrancheWeigher for Vec<T>
+where
+	T::External: Clone,
+{
+	type Weight = Vec<T::Weight>;
+	type External = T::External;
+
+	fn calculate_weight(&self, input: Self::External) -> Self::Weight {
+		let mut weights = Vec::with_capacity(self.len());
+		self.iter()
+			.for_each(|tranche| weights.push(tranche.calculate_weight(input.clone())));
+
+		weights
+	}
+}
+
+/// Implementation for a vec of TrancheWeigher
+impl<T: TrancheWeigher> TrancheWeigher for &[T]
+where
+	T::External: Clone,
+{
+	type Weight = Vec<T::Weight>;
+	type External = T::External;
+
+	fn calculate_weight(&self, input: Self::External) -> Self::Weight {
+		let mut weights = Vec::with_capacity(self.len());
+		self.iter()
+			.for_each(|tranche| weights.push(tranche.calculate_weight(input.clone())));
+
+		weights
+	}
+}
+
+pub trait Tranche {
+	type Supply;
+	type Value;
+	type Price;
+
+	fn supply(&self) -> Self::Supply;
+
+	fn value(&self) -> Self::Value;
+
+	fn price(&self) -> Self::Price;
+}
+
+impl<T: Tranche> Tranche for Vec<T>
+where
+	T::Value: Zero + CheckedAdd,
+{
+	type Supply = Vec<T::Supply>;
+	type Value = Result<T::Value, ArithmeticError>;
+	type Price = Vec<T::Price>;
+
+	fn supply(&self) -> Self::Supply {
+		let mut supplies = Vec::with_capacity(self.len());
+
+		self.iter()
+			.for_each(|tranche| supplies.push(tranche.supply()));
+
+		supplies
+	}
+
+	fn price(&self) -> Self::Price {
+		let mut prices = Vec::with_capacity(self.len());
+
+		self.iter().for_each(|tranche| prices.push(tranche.price()));
+
+		prices
+	}
+
+	fn value(&self) -> Self::Value {
+		self.iter().fold(Ok(Zero::zero()), |sum, tranche| {
+			sum.and_then(|sum| {
+				sum.checked_add(&tranche.value())
+					.ok_or(ArithmeticError::Overflow)
+			})
+		})
+	}
+}

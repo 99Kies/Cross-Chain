@@ -1,0 +1,27 @@
+[package]
+name = "common-traits"
+edition = '2021'
+version = '0.1.0'
+
+[package.metadata.docs.rs]
+targets = ['x86_64-unknown-linux-gnu']
+
+[dependencies]
+serde = { version = "1.0.102" }
+codec = { package = 'parity-scale-codec', version = '2.0.0', features = ['derive'] , default-features = false }
+scale-info = { version = "1.0", default-features = false, features = ["derive"] }
+impl-trait-for-tuples = "0.2.1"
+
+frame-support = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.16" }
+sp-runtime = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.16" }
+sp-std = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.16" }
+
+[features]
+default = ['std']
+std = [
+    "serde/std",
+    "codec/std",
+    "frame-support/std",
+    "sp-runtime/std",
+    "sp-std/std"
+]
