@@ -4655,6 +4655,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "orml-unknown-tokens"
+version = "0.4.1-dev"
+source = "git+https://github.com/open-web3-stack/open-runtime-module-library?branch=polkadot-v0.9.16#bb4e2742f70eddb7f79d5ceb4984297579189f26"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "orml-xcm-support",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-std",
+ "xcm",
+]
+
+[[package]]
 name = "orml-utilities"
 version = "0.4.1-dev"
 source = "git+https://github.com/open-web3-stack/open-runtime-module-library?branch=polkadot-v0.9.16#bb4e2742f70eddb7f79d5ceb4984297579189f26"
@@ -5587,6 +5602,7 @@ dependencies = [
  "orml-currencies",
  "orml-tokens",
  "orml-traits",
+ "orml-unknown-tokens",
  "orml-xcm",
  "orml-xcm-support",
  "orml-xtokens",
@@ -10309,7 +10325,7 @@ dependencies = [
  "chrono",
  "lazy_static",
  "matchers",
- "parking_lot 0.10.2",
+ "parking_lot 0.11.2",
  "regex",
  "serde",
  "serde_json",
@@ -10430,7 +10446,7 @@ version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee73e6e4924fe940354b8d4d98cad5231175d615cd855b758adc658c0aac6a0"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "rand 0.8.4",
  "static_assertions",
 ]

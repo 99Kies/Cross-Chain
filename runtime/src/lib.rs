@@ -14,7 +14,10 @@ use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
-	traits::{AccountIdLookup, BlakeTwo256, Block as BlockT, Convert, IdentifyAccount, Verify, Zero},
+	traits::{
+		AccountIdConversion, AccountIdLookup, BlakeTwo256, Block as BlockT, Convert,
+		IdentifyAccount, Verify, Zero
+	},
 	transaction_validity::{TransactionSource, TransactionValidity},
 	ApplyExtrinsicResult, MultiSignature, RuntimeDebug,
 };
@@ -72,8 +75,14 @@ use xcm_builder::{
 use xcm_executor::{traits::JustTry};
 
 use orml_traits::parameter_type_with_key;
-use orml_xcm_support::{IsNativeConcrete, MultiCurrencyAdapter, MultiNativeAsset};
+use orml_xcm_support::{IsNativeConcrete, MultiCurrencyAdapter, MultiNativeAsset, DepositToAlternative};
 use xcm_executor::{traits::WeightTrader, Assets, Config, XcmExecutor};
+
+/// Weights for pallets used in the runtime.
+mod weights;
+
+use orml_currencies::BasicCurrencyAdapter;
+
 // pub use primitives::CurrencyId;
 
 // pub use common_types::CurrencyId;
@@ -258,6 +267,30 @@ const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
 /// We allow for 0.5 of a second of compute with a 12 second average block time.
 const MAXIMUM_BLOCK_WEIGHT: Weight = WEIGHT_PER_SECOND / 2;
 
+// TODO: make those const fn
+pub fn dollar(currency_id: CurrencyId) -> Balance {
+	match currency_id {
+		CurrencyId::ROC => 10u128.saturating_pow(0),
+		CurrencyId::FF => 10u128.saturating_pow(1),
+		CurrencyId::DORA => 10u128.saturating_pow(2),
+	}
+}
+
+pub fn cent(currency_id: CurrencyId) -> Balance {
+	dollar(currency_id) / 100
+}
+
+fn xcm_base_tx_fee() -> Balance {
+	cent(CurrencyId::FF) / 10
+}
+
+pub fn roc_per_second() -> u128 {
+	let base_weight = Balance::from(ExtrinsicBaseWeight::get());
+	let base_tx_per_second = (WEIGHT_PER_SECOND as u128) / base_weight;
+	let fee_per_second = base_tx_per_second * xcm_base_tx_fee();
+	fee_per_second / 100
+}
+
 /// The version information used to identify this runtime when compiled natively.
 #[cfg(feature = "std")]
 pub fn native_version() -> NativeVersion {
@@ -293,7 +326,7 @@ parameter_types! {
 		.build_or_panic();
 	pub const SS58Prefix: u16 = 42;
 	pub CheckingAccount: AccountId = PolkadotXcm::check_account();
-	// pub const TreasuryPalletId: PalletId = PalletId(*b"ff/trsry");
+	pub const TreasuryPalletId: PalletId = PalletId(*b"ff/trsry");
 }
 
 // Configure FRAME pallets to include in runtime.
@@ -550,22 +583,33 @@ pub type Barrier = (
 // 	(),
 // >;
 
-/// Means for transacting the fungibles assets of ths parachain.
-pub type FungiblesTransactor = FungiblesAdapter<
-	// Use this fungibles implementation
-	Tokens,
-	// This means that this adapter should handle any token that `CurrencyIdConvert` can convert
-	// to `CurrencyId`, the `CurrencyId` type of `Tokens`, the fungibles implementation it uses.
-	ConvertedConcreteAssetId<CurrencyId, Balance, CurrencyIdConvert, JustTry>,
-	// Convert an XCM MultiLocation into a local account id
-	LocationToAccountId,
-	// Our chain's account ID type (we can't get away without mentioning it explicitly)
+// /// Means for transacting the fungibles assets of ths parachain.
+// pub type FungiblesTransactor = MultiCurrencyAdapter<
+// 	// Use this fungibles implementation
+// 	Tokens,
+// 	// This means that this adapter should handle any token that `CurrencyIdConvert` can convert
+// 	// to `CurrencyId`, the `CurrencyId` type of `Tokens`, the fungibles implementation it uses.
+// 	ConvertedConcreteAssetId<CurrencyId, Balance, CurrencyIdConvert, JustTry>,
+// 	// Convert an XCM MultiLocation into a local account id
+// 	LocationToAccountId,
+// 	// Our chain's account ID type (we can't get away without mentioning it explicitly)
+// 	AccountId,
+// 	// We only want to allow teleports of known assets. We use non-zero issuance as an indication
+// 	// that this asset is known.
+// 	NonZeroIssuance<AccountId, Tokens>,
+// 	// The account to use for tracking teleports.
+// 	CheckingAccount,
+// >;
+
+pub type LocalAssetTransactor = MultiCurrencyAdapter<
+	Currencies,
+	UnknownTokens,
+	IsNativeConcrete<CurrencyId, CurrencyIdConvert>,
 	AccountId,
-	// We only want to allow teleports of known assets. We use non-zero issuance as an indication
-	// that this asset is known.
-	NonZeroIssuance<AccountId, Tokens>,
-	// The account to use for tracking teleports.
-	CheckingAccount,
+	LocationToAccountId,
+	CurrencyId,
+	CurrencyIdConvert,
+	DepositToAlternative<NativeTreasuryAccount, Currencies, CurrencyId, AccountId, Balance>,
 >;
 
 /// Allow checking in assets that have issuance > 0.
@@ -653,63 +697,99 @@ where
 /// We need to ensure we have at least one rule per token we want to handle or else
 /// the xcm executor won't know how to charge fees for a transfer of said token.
 pub type Trader = (
-	// pub const RelayLocation: MultiLocation = MultiLocation::parent();
-	UsingComponents<IdentityFee<Balance>, RelayLocation, AccountId, Balances, ()>,
-	// UsingComponents<IdentityFee<Balance>, NativeLocation, AccountId, Balances, ()>,
-	// UsingComponents<IdentityFee<Balance>, DoraLocation, AccountId, Balances, ()>,
-	// UsingComponents<IdentityFee<Balance>, DoraPerSecond2000, AccountId, Balances, ()>,
 	// UsingComponents<IdentityFee<Balance>, RelayLocation, AccountId, Balances, ()>,
-
+	FixedRateOfFungible<RocPerSecond, ()>,
 	FixedRateOfFungible<NativePerSecond, ()>,
-	FixedRateOfFungible<DoraPerSecond1000, ()>,
-	FixedRateOfFungible<DoraPerSecond2000, ()>,
+	FixedRateOfFungible<NativeNewPerSecond, ()>,
+	FixedRateOfFungible<DoraPerSecond, ()>,
 );
 
 parameter_types! {
+	pub RocPerSecond: (AssetId, u128) = (MultiLocation::parent().into(), 1_000);
 	pub NativePerSecond: (AssetId, u128) = (
 		MultiLocation::new(
 			1,
-			X2(Parachain(1000), GeneralKey(CurrencyId::FF.encode())),
+			X2(Parachain(1000), GeneralKey(CurrencyId::FF.encode()))
 		).into(),
-		//TODO(nuno): we need to fine tune this value later on
-		10_000,
+		// FF:KSM = 80:1
+		// roc_per_second() * 80
+		10_000
+	);
+	pub NativeNewPerSecond: (AssetId, u128) = (
+		MultiLocation::new(
+			0,
+			X1(GeneralKey(CurrencyId::FF.encode()))
+		).into(),
+		// FF:KSM = 80:1
+		// roc_per_second() * 80
+		10_000
 	);
 
-	pub DoraPerSecond1000: (AssetId, u128) = (
+	pub DoraPerSecond: (AssetId, u128) = (
 		MultiLocation::new(
 			1,
-			X2(Parachain(1000), GeneralKey(CurrencyId::DORA.encode())),
+			X2(Parachain(2000), GeneralKey(CurrencyId::DORA.encode()))
 		).into(),
-		//TODO(nuno): we need to fine tune this value later on
-		200_000
-	);
-
-	/// We support this Trader for testing purposes when we spawn a sibling clone development
-	/// parachain with id 3000.
-	pub DoraPerSecond2000: (AssetId, u128) = (
-		MultiLocation::new(
-			1,
-			X2(Parachain(2000), GeneralKey(CurrencyId::DORA.encode())),
-		).into(),
-		//TODO(nuno): we need to fine tune this value later on
+		// DORA:KSM = 100:1
+		// roc_per_second() * 100
 		200_000
 	);
 }
+
+pub struct AllTokensAreCreatedEqualToWeight(MultiLocation);
+impl WeightTrader for AllTokensAreCreatedEqualToWeight {
+	fn new() -> Self {
+		Self(MultiLocation::parent())
+	}
+
+	fn buy_weight(&mut self, weight: Weight, payment: Assets) -> Result<Assets, XcmError> {
+		let asset_id = payment
+			.fungible
+			.iter()
+			.next()
+			.expect("Payment must be something; qed")
+			.0;
+		let required = MultiAsset {
+			id: asset_id.clone(),
+			fun: Fungible(weight as u128),
+		};
+
+		if let MultiAsset {
+			fun: _,
+			id: Concrete(ref id),
+		} = &required
+		{
+			self.0 = id.clone();
+		}
+
+		let unused = payment.checked_sub(required).map_err(|_| XcmError::TooExpensive)?;
+		Ok(unused)
+	}
+
+	fn refund_weight(&mut self, weight: Weight) -> Option<MultiAsset> {
+		if weight.is_zero() {
+			None
+		} else {
+			Some((self.0.clone(), weight as u128).into())
+		}
+	}
+}
+
 
 pub struct XcmConfig;
 impl xcm_executor::Config for XcmConfig {
 	type Call = Call;
 	type XcmSender = XcmRouter;
 	// How to withdraw and deposit an asset.
-	type AssetTransactor = FungiblesTransactor;
+	type AssetTransactor = LocalAssetTransactor;
 	type OriginConverter = XcmOriginToTransactDispatchOrigin;
 	type IsReserve = MultiNativeAsset;
 	type IsTeleporter = (); // Teleporting is disabled.
 	type LocationInverter = LocationInverter<Ancestry>;
 	type Barrier = Barrier;
 	type Weigher = FixedWeightBounds<UnitWeightCost, Call, MaxInstructions>;
-	// type Trader = UsingComponents<IdentityFee<Balance>, RelayLocation, AccountId, Balances, ()>;
 	type Trader = Trader;
+	// type Trader = AllTokensAreCreatedEqualToWeight;
 	type ResponseHandler = PolkadotXcm;
 	type AssetTrap = PolkadotXcm;
 	type AssetClaims = PolkadotXcm;
@@ -833,6 +913,22 @@ impl pallet_template::Config for Runtime {
 	type Event = Event;
 }
 
+parameter_types! {
+	pub const GetNativeCurrencyId: CurrencyId = CurrencyId::FF;
+	// pub const GetStableCurrencyId: CurrencyId = AUSD;
+	// pub const GetLiquidCurrencyId: CurrencyId = LDOT;
+	// pub const GetStakingCurrencyId: CurrencyId = ROC;
+}
+
+impl orml_currencies::Config for Runtime {
+	type Event = Event;
+	type MultiCurrency = Tokens;
+	type NativeCurrency = BasicCurrencyAdapter<Runtime, Balances, Amount, BlockNumber>;
+	type GetNativeCurrencyId = GetNativeCurrencyId;
+	type WeightInfo = ();
+}
+
+
 // // orml_currencies
 // parameter_types! {
 // 	pub const GetNativeCurrencyId: CurrencyId = CurrencyId::FF;
@@ -860,19 +956,70 @@ pub enum CurrencyId {
 }
 
 pub type Amount = i128;
+//
+// /// CurrencyIdConvert
+// /// This type implements conversions from our `CurrencyId` type into `MultiLocation` and vice-versa.
+// /// A currency locally is identified with a `CurrencyId` variant but in the network it is identified
+// /// in the form of a `MultiLocation`, in this case a pair (Para-Id, Currency-Id).
+// pub struct CurrencyIdConvert;
+//
+// /// Convert our `CurrencyId` type into its `MultiLocation` representation.
+// /// Other chains need to know how this conversion takes place in order to
+// /// handle it on their side.
+// impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
+// 	fn convert(id: CurrencyId) -> Option<MultiLocation> {
+// 		// Some(native_currency_location(id))
+// 		match id {
+// 			CurrencyId::ROC => Some(Parent.into()),
+// 			CurrencyId::FF => Some((Parent, Parachain(1000), GeneralKey("FF".into())).into()),
+// 			CurrencyId::DORA => Some((Parent, Parachain(2000), GeneralKey("DORA".into())).into()),
+// 		}
+// 	}
+// }
+//
+// /// Convert an incoming `MultiLocation` into a `CurrencyId` if possible.
+// /// Here we need to know the canonical representation of all the tokens we handle in order to
+// /// correctly convert their `MultiLocation` representation into our internal `CurrencyId` type.
+// impl xcm_executor::traits::Convert<MultiLocation, CurrencyId> for CurrencyIdConvert {
+// 	fn convert(location: MultiLocation) -> Result<CurrencyId, MultiLocation> {
+// 		if location == MultiLocation::parent() {
+// 			return Ok(CurrencyId::ROC);
+// 		}
+// 		match location.clone() {
+// 			MultiLocation {
+// 				parents: 1,
+// 				interior: X2(Parachain(para_id), GeneralKey(key)),
+// 			} if para_id == 1000 || para_id == 2000 => match &key[..] {
+// 				[0] => {
+// 					Ok(CurrencyId::FF)
+// 				},
+// 				[1] => {
+// 					Ok(CurrencyId::DORA)
+// 				},
+// 				_ => Err(location.clone()),
+// 			},
+// 			_ => Err(location.clone()),
+// 		}
+// 	}
+// }
+//
+// impl Convert<MultiAsset, Option<CurrencyId>> for CurrencyIdConvert {
+// 	fn convert(asset: MultiAsset) -> Option<CurrencyId> {
+// 		if let MultiAsset {
+// 			id: Concrete(location),
+// 			..
+// 		} = asset
+// 		{
+// 			<CurrencyIdConvert as xcm_executor::traits::Convert<_, _>>::convert(location).ok()
+// 		} else {
+// 			None
+// 		}
+// 	}
+// }
 
-/// CurrencyIdConvert
-/// This type implements conversions from our `CurrencyId` type into `MultiLocation` and vice-versa.
-/// A currency locally is identified with a `CurrencyId` variant but in the network it is identified
-/// in the form of a `MultiLocation`, in this case a pair (Para-Id, Currency-Id).
 pub struct CurrencyIdConvert;
-
-/// Convert our `CurrencyId` type into its `MultiLocation` representation.
-/// Other chains need to know how this conversion takes place in order to
-/// handle it on their side.
 impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
 	fn convert(id: CurrencyId) -> Option<MultiLocation> {
-		// Some(native_currency_location(id))
 		match id {
 			CurrencyId::ROC => Some(Parent.into()),
 			CurrencyId::FF => Some((Parent, Parachain(1000), GeneralKey("FF".into())).into()),
@@ -881,37 +1028,25 @@ impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
 	}
 }
 
-/// Convert an incoming `MultiLocation` into a `CurrencyId` if possible.
-/// Here we need to know the canonical representation of all the tokens we handle in order to
-/// correctly convert their `MultiLocation` representation into our internal `CurrencyId` type.
-impl xcm_executor::traits::Convert<MultiLocation, CurrencyId> for CurrencyIdConvert {
-	fn convert(location: MultiLocation) -> Result<CurrencyId, MultiLocation> {
-		if location == MultiLocation::parent() {
-			return Ok(CurrencyId::ROC);
+impl Convert<MultiLocation, Option<CurrencyId>> for CurrencyIdConvert {
+	fn convert(l: MultiLocation) -> Option<CurrencyId> {
+		let ff: Vec<u8> = "FF".into();
+		let dora: Vec<u8> = "DORA".into();
+		if l == MultiLocation::parent() {
+			return Some(CurrencyId::ROC);
 		}
-		match location.clone() {
-			MultiLocation {
-				parents: 1,
-				interior: X2(Parachain(para_id), GeneralKey(key)),
-			} if para_id == 1000 || para_id == 2000 => match &key[..] {
-				[0] => {
-					log::info!("===================FF=======================");
-					log::info!("=============================================");
-					log::info!("=============================================");
-					log::info!("=============================================");
-					Ok(CurrencyId::FF)
-				},
-				[1] => {
-					
-					log::info!("====================DORA=========================");
-					log::info!("=============================================");
-					log::info!("=============================================");
-					log::info!("=============================================");
-					Ok(CurrencyId::DORA)
-				},
-				_ => Err(location.clone()),
+		match l {
+			MultiLocation { parents, interior } if parents == 1 => match interior {
+				X2(Parachain(1000), GeneralKey(k)) if k == ff => Some(CurrencyId::FF),
+				X2(Parachain(2000), GeneralKey(k)) if k == dora => Some(CurrencyId::DORA),
+				_ => None,
 			},
-			_ => Err(location.clone()),
+			MultiLocation { parents, interior } if parents == 0 => match interior {
+				X1(GeneralKey(k)) if k == ff => Some(CurrencyId::FF),
+				X1(GeneralKey(k)) if k == dora => Some(CurrencyId::DORA),
+				_ => None,
+			},
+			_ => None,
 		}
 	}
 }
@@ -919,25 +1054,16 @@ impl xcm_executor::traits::Convert<MultiLocation, CurrencyId> for CurrencyIdConv
 impl Convert<MultiAsset, Option<CurrencyId>> for CurrencyIdConvert {
 	fn convert(asset: MultiAsset) -> Option<CurrencyId> {
 		if let MultiAsset {
-			id: Concrete(location),
+			// fun: Fungible(_),
+			id: Concrete(id),
 			..
 		} = asset
 		{
-			<CurrencyIdConvert as xcm_executor::traits::Convert<_, _>>::convert(location).ok()
+			Self::convert(id)
 		} else {
-			None
+			Option::None
 		}
 	}
-}
-
-fn native_currency_location(id: CurrencyId) -> MultiLocation {
-	MultiLocation::new(
-		1,
-		X2(
-			Parachain(ParachainInfo::parachain_id().into()),
-			GeneralKey(id.encode()),
-		),
-	)
 }
 
 // pub struct CurrencyIdConvert;
@@ -1048,7 +1174,7 @@ parameter_types! {
 	// pub const TreasuryPalletId: PalletId = ;
 	// pub NativeTreasuryAccount: AccountId = PalletId(*b"ff/trsry")::get().into_account();
 	pub ORMLMaxLocks: u32 = 2;
-	// pub NativeTreasuryAccount: AccountId = TreasuryPalletId::get().into_account();
+	pub NativeTreasuryAccount: AccountId = TreasuryPalletId::get().into_account();
 
 }
 
@@ -1102,10 +1228,10 @@ impl orml_xcm::Config for Runtime {
 // 	type DustRemovalWhitelist = DustRemovalWhitelist;
 // }
 
-// // orml unknown tokens
-// impl orml_unknown_tokens::Config for Runtime {
-// 	type Event = Event;
-// }
+// orml unknown tokens
+impl orml_unknown_tokens::Config for Runtime {
+	type Event = Event;
+}
 
 // // orml xcm
 // impl orml_xcm::Config for Runtime {
@@ -1147,10 +1273,10 @@ construct_runtime!(
 
 		Tokens: orml_tokens::{Pallet, Storage, Event<T>, Config<T>} = 34,
 		XTokens: orml_xtokens::{Pallet, Storage, Call, Event<T>} = 35,
-		// UnknownTokens: orml_unknown_tokens::{Pallet, Storage, Event} = 35,
+		UnknownTokens: orml_unknown_tokens::{Pallet, Storage, Event} = 36,
 		// OrmlXcm: orml_xcm::{Pallet, Call, Event<T>} = 36,
-		OrmlXcm: orml_xcm::{Pallet, Call, Event<T>} = 36,
-		// Currencies: orml_currencies::{Pallet, Call, Event<T>} = 37,
+		OrmlXcm: orml_xcm::{Pallet, Call, Event<T>} = 37,
+		Currencies: orml_currencies::{Pallet, Call, Event<T>} = 38,
 		// Tokens: orml_tokens::{Pallet, Storage, Event<T>, Config<T>} = 38,
 
 		// Template
