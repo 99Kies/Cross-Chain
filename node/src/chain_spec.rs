@@ -122,7 +122,7 @@ pub fn local_testnet_config() -> ChainSpec {
 	let mut properties = sc_chain_spec::Properties::new();
 	// properties.insert("tokenSymbol".into(), "UNIT".into());
 	properties.insert("tokenSymbol".into(), "FF".into());
-	properties.insert("tokenDecimals".into(), 12.into());
+	properties.insert("tokenDecimals".into(), 18.into());
 	properties.insert("ss58Format".into(), 42.into());
 
 	ChainSpec::from_genesis(

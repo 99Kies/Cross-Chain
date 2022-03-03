@@ -267,30 +267,6 @@ const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
 /// We allow for 0.5 of a second of compute with a 12 second average block time.
 const MAXIMUM_BLOCK_WEIGHT: Weight = WEIGHT_PER_SECOND / 2;
 
-// TODO: make those const fn
-// pub fn dollar(currency_id: CurrencyId) -> Balance {
-// 	match currency_id {
-// 		CurrencyId::ROC => 10u128.saturating_pow(0),
-// 		CurrencyId::FF => 10u128.saturating_pow(1),
-// 		CurrencyId::DORA => 10u128.saturating_pow(2),
-// 	}
-// }
-//
-// pub fn cent(currency_id: CurrencyId) -> Balance {
-// 	dollar(currency_id) / 100
-// }
-//
-// fn xcm_base_tx_fee() -> Balance {
-// 	cent(CurrencyId::FF) / 10
-// }
-//
-// pub fn roc_per_second() -> u128 {
-// 	let base_weight = Balance::from(ExtrinsicBaseWeight::get());
-// 	let base_tx_per_second = (WEIGHT_PER_SECOND as u128) / base_weight;
-// 	let fee_per_second = base_tx_per_second * xcm_base_tx_fee();
-// 	fee_per_second / 100
-// }
-
 /// The version information used to identify this runtime when compiled natively.
 #[cfg(feature = "std")]
 pub fn native_version() -> NativeVersion {
