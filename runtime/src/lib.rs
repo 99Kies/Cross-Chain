@@ -96,18 +96,6 @@ use orml_currencies::BasicCurrencyAdapter;
 /// Import the template pallet.
 pub use pallet_template;
 
-// #[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, TypeInfo)]
-// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-// pub enum CurrencyId {
-// 	Native,
-// 	DOT,
-// 	KSM,
-// 	BTC,
-// 	WND,
-// }
-
-
-
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
 pub type Signature = MultiSignature;
 
@@ -253,6 +241,10 @@ pub const UNIT: Balance = 1_000_000_000_000;
 pub const MILLIUNIT: Balance = 1_000_000_000;
 pub const MICROUNIT: Balance = 1_000_000;
 
+pub const MILLICENTS: Balance = 1_000 * MICROUNIT;
+pub const CENTS: Balance = 1_000 * MILLICENTS; // assume this is worth about a cent.
+pub const DOLLARS: Balance = 100 * CENTS;
+
 /// The existential deposit. Set to 1/10 of the Connected Relay Chain.
 pub const EXISTENTIAL_DEPOSIT: Balance = MILLIUNIT;
 
@@ -266,6 +258,14 @@ const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
 
 /// We allow for 0.5 of a second of compute with a 12 second average block time.
 const MAXIMUM_BLOCK_WEIGHT: Weight = WEIGHT_PER_SECOND / 2;
+
+pub fn roc_per_second() -> u128 {
+	let base_weight = Balance::from(ExtrinsicBaseWeight::get());
+	let base_tx_fee = DOLLARS / 1000;
+	let base_tx_per_second = (WEIGHT_PER_SECOND as u128) / base_weight;
+	let fee_per_second = base_tx_per_second * base_tx_fee;
+	fee_per_second / 100
+}
 
 /// The version information used to identify this runtime when compiled natively.
 #[cfg(feature = "std")]
@@ -528,24 +528,24 @@ pub type Trader = (
 );
 
 parameter_types! {
-	pub RocPerSecond: (AssetId, u128) = (MultiLocation::parent().into(), 1_000);
+	pub RocPerSecond: (AssetId, u128) = (MultiLocation::parent().into(), roc_per_second());
 	pub NativePerSecond: (AssetId, u128) = (
 		MultiLocation::new(
 			1,
 			X2(Parachain(1000), GeneralKey(b"FF".to_vec()))
 		).into(),
-		// FF:KSM = 80:1
-		// roc_per_second() * 80
-		10_000
+		// FF:ROC = 80:1
+		roc_per_second() * 80
+		// 10_000
 	);
 	pub NativeNewPerSecond: (AssetId, u128) = (
 		MultiLocation::new(
 			0,
 			X1(GeneralKey(b"FF".to_vec()))
 		).into(),
-		// FF:KSM = 80:1
-		// roc_per_second() * 80
-		10_000
+		// FF:ROC = 80:1
+		roc_per_second() * 80
+		// 10_000
 	);
 
 	pub DoraPerSecond: (AssetId, u128) = (
@@ -553,9 +553,9 @@ parameter_types! {
 			1,
 			X2(Parachain(2000), GeneralKey(b"DORA".to_vec()))
 		).into(),
-		// DORA:KSM = 100:1
-		// roc_per_second() * 100
-		200_000
+		// DORA:ROC = 100:1
+		roc_per_second() * 100
+		// 200_000
 	);
 }
 
